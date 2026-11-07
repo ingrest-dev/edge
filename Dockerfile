@@ -1,4 +1,4 @@
-FROM debian:trixie-20261020-slim@sha256:62bd423aeee912639ca8ee681c2b762cb3e25137e0a92b20be455898a9f034ad AS sources
+FROM debian:trixie-20261027-slim@sha256:f6b08b09a05725f9431502d3b5714f5c4576e82c1a84fa1debe0c24a7e0c3ec4 AS sources
 
 ARG OPENRESTY
 ARG BROTLI=53e0fb55f250f48fe80c0ddbf6c0f7103cdbaae1
@@ -60,7 +60,7 @@ RUN cd "openresty-${OPENRESTY}" \
     && make install \
     && rm -rf /usr/local/openresty/nginx/html /usr/local/openresty/pod
 
-FROM debian:trixie-20261020-slim@sha256:62bd423aeee912639ca8ee681c2b762cb3e25137e0a92b20be455898a9f034ad
+FROM debian:trixie-20261027-slim@sha256:f6b08b09a05725f9431502d3b5714f5c4576e82c1a84fa1debe0c24a7e0c3ec4
 
 ARG OPENRESTY
 LABEL dev.ingrest.image=edge \
