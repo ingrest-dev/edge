@@ -1,0 +1,45 @@
+name: watch
+
+on:
+  schedule:
+    - cron: "17 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  openresty:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          current=$(cat VERSION)
+          latest=$(git ls-remote --tags --refs https://github.com/openresty/openresty 'v*' | sed 's|.*refs/tags/v||' | grep -E '^[0-9]+(\.[0-9]+){3}$' | sort -V | tail -n 1)
+          if [ -z "$latest" ] || [ "$(printf '%s\n%s\n' "$current" "$latest" | sort -V | tail -n 1)" = "$current" ]; then
+            echo "OpenResty $current is the latest"
+            exit 0
+          fi
+          if ! curl -fsI -o /dev/null "https://openresty.org/download/openresty-$latest.tar.gz.asc"; then
+            echo "OpenResty $latest is tagged but not released yet"
+            exit 0
+          fi
+          branch="openresty-$latest"
+          if git ls-remote --exit-code --heads origin "$branch" >/dev/null; then
+            echo "branch $branch exists"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          echo "$latest" >VERSION
+          git commit -am "build(openresty): $latest"
+          git push origin "$branch"
+          gh pr create --base main --head "$branch" --title "build(openresty): $latest" --body ""
+          gh workflow run build.yml --ref "$branch"
