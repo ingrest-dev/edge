@@ -21,6 +21,7 @@ done
 cp "$here/nginx.conf" "$work/nginx.conf"
 chmod 644 "$work"/*
 docker run -d --name "$name" --read-only --tmpfs /tmp -p 127.0.0.1:18080:8080 -p 127.0.0.1:18443:8443 -p 127.0.0.1:19000:9000 \
+	-p 127.0.0.1:19001:9001 -p 127.0.0.1:19443:9443 \
 	-v "$work:/test:ro" "$image" nginx -e stderr -c /test/nginx.conf -g "daemon off;" >/dev/null
 i=0
 until curl -fs -o /dev/null http://127.0.0.1:18080/; do
@@ -35,14 +36,31 @@ for enc in br zstd; do
 done
 got=$(curl -fs http://127.0.0.1:18080/libs)
 [ "$got" = 'ndk v {"ok":true} a1cb100f' ] || fail "libs: got '$got'"
-got=$(curl -fs http://127.0.0.1:18080/balancer)
+got=$(curl -fs -D "$work/headers" http://127.0.0.1:18080/balancer)
 [ "$got" = backend ] || fail "balancer_by_lua: got '$got'"
+grep -qi '^x-failure: failed' "$work/headers" || fail "balancer retry or header_filter_by_lua: $(cat "$work/headers")"
+got=$(curl -fs http://127.0.0.1:18080/logged)
+[ "$got" = "502, 200 failed" ] || fail "log_by_lua: got '$got'"
+got=$(curl -s http://127.0.0.1:18080/api)
+[ "$got" = ok ] || fail "Lua API: got '$got'"
+got=$(curl -fs --data-binary edge http://127.0.0.1:18080/body)
+[ "$got" = "POST edge" ] || fail "request body: got '$got'"
+got=$(curl -s -o /dev/null -w '%{http_code}' --data-binary edge http://127.0.0.1:18080/deny)
+[ "$got" = 403 ] || fail "ngx.status 403: got '$got'"
+got=$(curl -s -o /dev/null -w '%{http_code}' 'http://127.0.0.1:18080/waf?x=bad')/$(curl -fs 'http://127.0.0.1:18080/waf?x=good')
+[ "$got" = 403/pass ] || fail "modsecurity: got '$got'"
+got=$(docker exec "$name" curl -sk --http3-only -o /dev/null -w '%{http_version} %{http_code}' https://127.0.0.1:8443/)
+[ "$got" = "3 200" ] || fail "HTTP/3: got '$got'"
 got=$(curl -fs http://127.0.0.1:19000/)
 [ "$got" = backend ] || fail "stream balancer_by_lua: got '$got'"
 for c in fallback lua; do
 	got=$(echo | openssl s_client -connect 127.0.0.1:18443 -servername "$c.test" 2>/dev/null | openssl x509 -noout -subject 2>/dev/null)
 	case "$got" in *"$c.test"*) ;; *) fail "certificate for $c.test: got '$got'" ;; esac
 done
+got=$(echo | openssl s_client -connect 127.0.0.1:19443 -servername lua.test 2>/dev/null | openssl x509 -noout -subject 2>/dev/null)
+case "$got" in *lua.test*) ;; *) fail "stream ssl_preread passthrough: got '$got'" ;; esac
+got=$(curl -s --http0.9 http://127.0.0.1:19001/)
+[ "$got" = "8081 stream true, lua.test" ] || fail "stream preread, balancer ctx or log_by_lua: got '$got'"
 if docker logs "$name" 2>&1 | grep -E '\[(alert|crit|emerg)\]'; then
 	fail "alerts in the error log"
 fi
