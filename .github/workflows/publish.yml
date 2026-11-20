@@ -68,7 +68,7 @@ jobs:
 
   publish:
     needs: [route, approve]
-    if: always() && needs.route.result == 'success' && (needs.approve.result == 'success' || (needs.approve.result == 'skipped' && needs.route.outputs.environment == 'release-auto'))
+    if: ${{ !cancelled() && needs.route.result == 'success' && (needs.approve.result == 'success' || (needs.approve.result == 'skipped' && needs.route.outputs.environment == 'release-auto')) }}
     runs-on: ubuntu-24.04
     environment: channel
     concurrency:
@@ -124,9 +124,12 @@ jobs:
             echo "$SHA is already published as $IMAGE@$digest"
             exit 0
           fi
-          if [ -n "$newest" ] && [ "$(gh api "repos/$GITHUB_REPOSITORY/compare/$SHA...$newest" --jq .status)" = ahead ]; then
-            echo "$newest, newer than $SHA, is already published"
-            exit 1
+          if [ -n "$newest" ]; then
+            order=$(gh api "repos/$GITHUB_REPOSITORY/compare/$SHA...$newest" --jq .status)
+            case "$order" in
+            behind | diverged | identical) ;;
+            *) echo "the published $newest is $order of $SHA: not publishing an older build"; exit 1 ;;
+            esac
           fi
           if [ "$APPROVE" = skipped ] && [ "$newest" != "$PREV" ]; then
             echo "the channel moved from $PREV to $newest since the route check"
@@ -152,18 +155,39 @@ jobs:
             done
             return 1
           }
+          intact() {
+            rm -f check.json check.json.minisig
+            gh release download channels -p stable.json -O check.json 2>/dev/null &&
+              gh release download channels -p stable.json.minisig -O check.json.minisig 2>/dev/null &&
+              minisign -V -q -p keys/edge.pub -m check.json -x check.json.minisig
+          }
           mkdir -p previous
           if [ -f old.json.minisig ]; then
-            cp old.json previous/stable.json
-            cp old.json.minisig previous/stable.json.minisig
+            cp old.json previous/stable.json.prev
+            cp old.json.minisig previous/stable.json.prev.minisig
+            gh release upload channels previous/stable.json.prev previous/stable.json.prev.minisig --clobber
           fi
           if gh release upload channels stable.json stable.json.minisig --clobber && check stable.json; then
             cat stable.json >>"$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-          echo "the new manifest did not land; putting the previous one back"
-          if [ -f previous/stable.json ]; then
-            gh release upload channels previous/stable.json previous/stable.json.minisig --clobber && check previous/stable.json \
-              || echo "the previous manifest did not land either: upload previous/stable.json and its .minisig by hand"
+          echo "the new manifest did not land"
+          if intact; then
+            echo "the release still holds a valid manifest"
+          elif [ -f previous/stable.json.prev ]; then
+            mkdir -p restore
+            cp previous/stable.json.prev restore/stable.json
+            cp previous/stable.json.prev.minisig restore/stable.json.minisig
+            gh release upload channels restore/stable.json restore/stable.json.minisig --clobber && check restore/stable.json \
+              || echo "restore failed: the release keeps the last good pair as stable.json.prev and stable.json.prev.minisig, rename them back"
           fi
+          exit 1
+
+  lost:
+    needs: publish
+    if: always() && needs.publish.result == 'cancelled'
+    runs-on: ubuntu-24.04
+    steps:
+      - run: |
+          echo "publish was cancelled, possibly by a newer publish in the queue: re-run the failed jobs of this run if the image should still be published"
           exit 1
