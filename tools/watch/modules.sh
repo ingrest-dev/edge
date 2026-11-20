@@ -15,7 +15,7 @@ groups=(
 	"modsecurity MODSECURITY:owasp-modsecurity/ModSecurity-nginx"
 )
 
-security='CVE-[0-9]{4}-[0-9]+|GHSA-|\bsecurity\b|vulnerab|overflow|out[- ]of[- ]bounds|use[- ]after[- ]free|double[- ]free'
+security='CVE-[0-9]{4}-[0-9]+|GHSA-|\bsecurity\b|vulnerab|overflow|out[- ]of[- ]bounds|use[- ]after[- ]free|double[- ]free|segfault|crash|null pointer|heap|memory (leak|corruption)|uninitiali'
 
 pattern() {
 	case $1 in
@@ -61,14 +61,23 @@ for g in "${groups[@]}"; do
 		read -r tag sha <<<"$out"
 		[[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo "bad sha '$sha' for $repo $tag" >&2; exit 1; }
 		[ "$tag" != HEAD ] || tag=${sha:0:12}
+		if [ "$sha" = "$cur" ]; then
+			tags+=("${repo#*/} $tag")
+			continue
+		fi
+		status=$(gh api "repos/$repo/compare/$cur...$sha" --jq .status 2>/dev/null || echo unknown)
+		if [ "$status" = behind ]; then
+			echo "$repo $tag is behind the pinned $cur: kept" >&2
+			tags+=("${repo#*/} ${cur:0:12}")
+			continue
+		fi
 		tags+=("${repo#*/} $tag")
 		edits+=("s/^ARG $arg=.*/ARG $arg=$sha/")
-		[ "$sha" != "$cur" ] || continue
 		changed=true
-		echo "- [$repo $tag](https://github.com/$repo/compare/$cur...$sha)" >>"$body"
-		if msgs=$(gh api "repos/$repo/compare/$cur...$sha" --jq '.commits[].commit.message | split("\n")[0]' 2>/dev/null); then
-			hits=$(printf '%s\n' "$msgs" | grep -iE "$security" || true)
-			[ -z "$hits" ] || printf '%s\n' "$hits" | sed 's/^/  - security? /' >>"$body"
+		echo "- [$repo $tag](https://github.com/$repo/compare/$cur...$sha) ($status)" >>"$body"
+		if msgs=$(gh api --paginate "repos/$repo/compare/$cur...$sha?per_page=100" --jq '.commits[].commit.message | gsub("\n"; " ")' 2>/dev/null); then
+			hits=$(printf '%s\n' "$msgs" | grep -iE "$security" | cut -c1-200 | tr -d '`' || true)
+			[ -z "$hits" ] || printf '%s\n' "$hits" | sed 's/^/  - security? `/; s/$/`/' >>"$body"
 		else
 			echo "  - commits not compared" >>"$body"
 		fi

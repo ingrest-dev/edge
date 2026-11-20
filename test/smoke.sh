@@ -59,7 +59,12 @@ for c in fallback lua; do
 done
 got=$(echo | openssl s_client -connect 127.0.0.1:19443 -servername lua.test 2>/dev/null | openssl x509 -noout -subject 2>/dev/null)
 case "$got" in *lua.test*) ;; *) fail "stream ssl_preread passthrough: got '$got'" ;; esac
-got=$(curl -s --http0.9 http://127.0.0.1:19001/)
+i=0
+until got=$(curl -s --http0.9 http://127.0.0.1:19001/) && [ "${got##*, }" != nothing ]; do
+	i=$((i + 1))
+	[ "$i" -lt 20 ] || break
+	sleep 0.2
+done
 [ "$got" = "8081 stream true, lua.test" ] || fail "stream preread, balancer ctx or log_by_lua: got '$got'"
 if docker logs "$name" 2>&1 | grep -E '\[(alert|crit|emerg)\]'; then
 	fail "alerts in the error log"

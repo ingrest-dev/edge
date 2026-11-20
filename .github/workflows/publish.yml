@@ -9,9 +9,6 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: publish
-
 env:
   IMAGE: ghcr.io/ingrest-dev/edge
 
@@ -29,20 +26,31 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           SHA: ${{ github.event.workflow_run.head_sha }}
+          EVENT: ${{ github.event.workflow_run.event }}
+          ACTOR: ${{ github.event.workflow_run.triggering_actor.login }}
         run: |
           env=release
-          files=$(gh api "repos/$GITHUB_REPOSITORY/commits/$SHA" --jq '[.files[].filename] | join(" ")')
-          pr=$(gh api "repos/$GITHUB_REPOSITORY/commits/$SHA/pulls" --jq '[.[] | select(.merged_at != null and .user.login == "github-actions[bot]" and (.head.ref | startswith("nginx-")))] | length')
-          if [ "$files" = VERSION ] && [ "$pr" = 1 ]; then
+          prev=$(gh release download channels -R "$GITHUB_REPOSITORY" -p stable.json -O - 2>/dev/null \
+            | jq -r '[.images[] | select(.commit != null)] | sort_by(.published_at) | last | .commit // empty' || true)
+          change=none
+          pr=0
+          if [[ "$prev" =~ ^[0-9a-f]{40}$ ]]; then
+            change=$(gh api "repos/$GITHUB_REPOSITORY/compare/$prev...$SHA" --jq '.status + " " + ([.files[].filename] | join(" "))')
+            pr=$(gh api "repos/$GITHUB_REPOSITORY/commits/$SHA/pulls" \
+              --jq "[.[] | select(.merged_at != null and .merge_commit_sha == \"$SHA\" and .user.login == \"github-actions[bot]\" and (.head.ref | startswith(\"nginx-\")))] | length")
+          fi
+          if [ "$change" = "ahead VERSION" ] && [ "$pr" = 1 ] && [ "$EVENT" = workflow_dispatch ] && [ "$ACTOR" = "github-actions[bot]" ]; then
             env=release-auto
           fi
-          echo "commit changes '$files', bot nginx pull requests: $pr, environment $env"
+          echo "last published commit '${prev:-unknown}', change since: $change, bot nginx pull requests: $pr, $EVENT by $ACTOR: environment $env"
           echo "environment=$env" >>"$GITHUB_OUTPUT"
 
   publish:
     needs: route
     runs-on: ubuntu-24.04
     environment: ${{ needs.route.outputs.environment }}
+    concurrency:
+      group: publish-${{ needs.route.outputs.environment }}
     permissions:
       contents: write
       packages: read
@@ -88,8 +96,8 @@ jobs:
             ;;
           *) echo '{"channel":"stable","images":[]}' >old.json ;;
           esac
-          jq --arg v "$version" --arg img "$IMAGE@$digest" --arg min "$min_panel" --argjson sec "$security" --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            '{channel: "stable", images: ([{version: $v, image: $img, min_panel: $min, security: $sec, published_at: $at}] + [.images[] | select(.image != $img)])[:20]}' \
+          jq --arg v "$version" --arg img "$IMAGE@$digest" --arg min "$min_panel" --argjson sec "$security" --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg commit "$SHA" \
+            '{channel: "stable", images: ([{version: $v, image: $img, min_panel: $min, security: $sec, published_at: $at, commit: $commit}] + [.images[] | select(.image != $img)])[:20]}' \
             old.json >stable.json
           umask 077
           printf '%s\n' "$EDGE_KEY" >edge.key
@@ -97,4 +105,7 @@ jobs:
           rm edge.key
           minisign -V -p keys/edge.pub -m stable.json
           gh release upload channels stable.json stable.json.minisig --clobber
+          sleep 10
+          gh release download channels -p stable.json -O - | jq -e --arg img "$IMAGE@$digest" '.images | any(.image == $img)' >/dev/null \
+            || { echo "stable.json lost this image: another publish wrote it at the same time, rerun this one"; exit 1; }
           cat stable.json >>"$GITHUB_STEP_SUMMARY"
