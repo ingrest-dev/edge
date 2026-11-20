@@ -11,8 +11,8 @@ ARG RESTY_STRING=282590f58d4c927226492e0211b974d72b759329
 ARG CJSON=5f53e878d0441e1555f53060178c61d161079e06
 ARG BROTLI=53e0fb55f250f48fe80c0ddbf6c0f7103cdbaae1
 ARG BROTLI_LIB=db24a98aed38a16de78cc05ca15cdd8dc2a0d92d
-ARG ZSTD=6be764e2bed04f889af824eff2d4dd737ebdab5a
-ARG GEOIP2=cbaa35461c62a99d2577e6bae3273492502d8769
+ARG ZSTD=6bce903d3f02416d478fb11efeb0303945bdbca9
+ARG GEOIP2=445df24ef3781e488cee3dfe8a1e111997fc1dfe
 ARG MODSECURITY=3f4b57df10ce43b1f1c722141f7621dc64838be8
 
 RUN apt-get update \
@@ -40,7 +40,7 @@ RUN fetch() { git init -q "$1" && git -C "$1" fetch -q --depth 1 "https://github
     && fetch cjson openresty/lua-cjson "${CJSON}" \
     && fetch brotli google/ngx_brotli "${BROTLI}" \
     && rm -rf brotli/deps/brotli && fetch brotli/deps/brotli google/brotli "${BROTLI_LIB}" \
-    && fetch zstd tokers/zstd-nginx-module "${ZSTD}" \
+    && fetch zstd GetPageSpeed/zstd-nginx-module "${ZSTD}" \
     && fetch geoip2 leev/ngx_http_geoip2_module "${GEOIP2}" \
     && fetch modsecurity owasp-modsecurity/ModSecurity-nginx "${MODSECURITY}"
 
