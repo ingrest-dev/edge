@@ -21,7 +21,14 @@ jobs:
       pull-requests: read
     outputs:
       environment: ${{ steps.route.outputs.environment }}
+      prev: ${{ steps.route.outputs.prev }}
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: false
+          sparse-checkout: keys
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends minisign
       - id: route
         env:
           GH_TOKEN: ${{ github.token }}
@@ -30,20 +37,26 @@ jobs:
           ACTOR: ${{ github.event.workflow_run.triggering_actor.login }}
         run: |
           env=release
-          prev=$(gh release download channels -R "$GITHUB_REPOSITORY" -p stable.json -O - 2>/dev/null \
-            | jq -r '[.images[] | select(.commit != null)] | sort_by(.published_at) | last | .commit // empty' || true)
+          prev=
           change=none
           pr=0
+          if gh release download channels -R "$GITHUB_REPOSITORY" -p stable.json -p stable.json.minisig 2>/dev/null \
+            && minisign -V -q -p keys/edge.pub -m stable.json -x stable.json.minisig; then
+            prev=$(jq -r '[.images[] | select(.commit != null)] | sort_by(.published_at) | last | .commit // empty' stable.json || true)
+          fi
           if [[ "$prev" =~ ^[0-9a-f]{40}$ ]]; then
-            change=$(gh api "repos/$GITHUB_REPOSITORY/compare/$prev...$SHA" --jq '.status + " " + ([.files[].filename] | join(" "))')
+            change=$(gh api "repos/$GITHUB_REPOSITORY/compare/$prev...$SHA" --jq '.status + " " + ([.files[].filename] | join(" "))') || change=error
             pr=$(gh api "repos/$GITHUB_REPOSITORY/commits/$SHA/pulls" \
-              --jq "[.[] | select(.merged_at != null and .merge_commit_sha == \"$SHA\" and .user.login == \"github-actions[bot]\" and (.head.ref | startswith(\"nginx-\")))] | length")
+              --jq "[.[] | select(.merged_at != null and .merge_commit_sha == \"$SHA\" and .user.login == \"github-actions[bot]\" and (.head.ref | startswith(\"nginx-\")))] | length") || pr=0
+          else
+            prev=
           fi
           if [ "$change" = "ahead VERSION" ] && [ "$pr" = 1 ] && [ "$EVENT" = workflow_dispatch ] && [ "$ACTOR" = "github-actions[bot]" ]; then
             env=release-auto
           fi
           echo "last published commit '${prev:-unknown}', change since: $change, bot nginx pull requests: $pr, $EVENT by $ACTOR: environment $env"
           echo "environment=$env" >>"$GITHUB_OUTPUT"
+          echo "prev=$prev" >>"$GITHUB_OUTPUT"
 
   publish:
     needs: route
@@ -51,6 +64,7 @@ jobs:
     environment: ${{ needs.route.outputs.environment }}
     concurrency:
       group: publish-${{ needs.route.outputs.environment }}
+      cancel-in-progress: false
     permissions:
       contents: write
       packages: read
@@ -77,6 +91,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           SHA: ${{ github.event.workflow_run.head_sha }}
           EDGE_KEY: ${{ secrets.EDGE_KEY }}
+          ROUTE: ${{ needs.route.outputs.environment }}
+          PREV: ${{ needs.route.outputs.prev }}
         run: |
           version=$(cat VERSION)
           min_panel=$(cat MIN_PANEL)
@@ -86,16 +102,28 @@ jobs:
           tagged=$(docker buildx imagetools inspect "$IMAGE:$version-$short" --format '{{json .Manifest}}' | jq -r .digest)
           [ "$tagged" = "$digest" ] || { echo "$IMAGE:$version-$short is $tagged, the build made $digest"; exit 1; }
           security=$(gh api "repos/$GITHUB_REPOSITORY/commits/$SHA/pulls" --jq '[.[].labels[].name] | index("security") != null')
-          gh release view channels >/dev/null 2>&1 || gh release create channels --title channels --notes "Signed manifests of edge images" --latest=false
-          assets=$(gh release view channels --json assets --jq '[.assets[].name] | join(" ")')
-          case " $assets " in
-          *" stable.json "*)
+          unlock() { gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/heads/publish-lock" >/dev/null 2>&1 || true; }
+          for i in $(seq 1 90); do
+            if gh api -X POST "repos/$GITHUB_REPOSITORY/git/refs" -f ref=refs/heads/publish-lock -f sha="$SHA" >/dev/null 2>&1; then
+              locked=1
+              break
+            fi
+            sleep 10
+          done
+          [ -n "${locked:-}" ] || { echo "branch publish-lock is held for 15 minutes; delete it when no publish runs"; exit 1; }
+          trap unlock EXIT
+          if gh release view channels >/dev/null 2>&1; then
             gh release download channels -p stable.json -O old.json
             gh release download channels -p stable.json.minisig -O old.json.minisig
             minisign -V -p keys/edge.pub -m old.json -x old.json.minisig
-            ;;
-          *) echo '{"channel":"stable","images":[]}' >old.json ;;
-          esac
+          else
+            gh release create channels --title channels --notes "Signed manifests of edge images" --latest=false
+            echo '{"channel":"stable","images":[]}' >old.json
+          fi
+          if [ "$ROUTE" = release-auto ]; then
+            newest=$(jq -r '[.images[] | select(.commit != null)] | sort_by(.published_at) | last | .commit // empty' old.json)
+            [ "$newest" = "$PREV" ] || { echo "the channel moved from $PREV to $newest since the route check"; exit 1; }
+          fi
           jq --arg v "$version" --arg img "$IMAGE@$digest" --arg min "$min_panel" --argjson sec "$security" --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg commit "$SHA" \
             '{channel: "stable", images: ([{version: $v, image: $img, min_panel: $min, security: $sec, published_at: $at, commit: $commit}] + [.images[] | select(.image != $img)])[:20]}' \
             old.json >stable.json
@@ -105,7 +133,8 @@ jobs:
           rm edge.key
           minisign -V -p keys/edge.pub -m stable.json
           gh release upload channels stable.json stable.json.minisig --clobber
-          sleep 10
-          gh release download channels -p stable.json -O - | jq -e --arg img "$IMAGE@$digest" '.images | any(.image == $img)' >/dev/null \
-            || { echo "stable.json lost this image: another publish wrote it at the same time, rerun this one"; exit 1; }
+          gh release download channels -p stable.json -O check.json
+          gh release download channels -p stable.json.minisig -O check.json.minisig
+          minisign -V -p keys/edge.pub -m check.json -x check.json.minisig
+          cmp -s stable.json check.json || { echo "stable.json in the release differs from the one just signed"; exit 1; }
           cat stable.json >>"$GITHUB_STEP_SUMMARY"

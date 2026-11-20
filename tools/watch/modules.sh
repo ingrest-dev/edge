@@ -66,8 +66,8 @@ for g in "${groups[@]}"; do
 			continue
 		fi
 		status=$(gh api "repos/$repo/compare/$cur...$sha" --jq .status 2>/dev/null || echo unknown)
-		if [ "$status" = behind ]; then
-			echo "$repo $tag is behind the pinned $cur: kept" >&2
+		if [ "$status" = behind ] || [ "$status" = unknown ]; then
+			echo "$repo $tag is $status against the pinned $cur: kept" >&2
 			tags+=("${repo#*/} ${cur:0:12}")
 			continue
 		fi
