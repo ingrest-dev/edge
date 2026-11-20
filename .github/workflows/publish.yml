@@ -24,6 +24,7 @@ jobs:
       contents: write
       packages: read
       pull-requests: read
+      actions: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -34,7 +35,13 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - run: sudo apt-get install -y --no-install-recommends minisign
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: release-digest
+          path: release
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends minisign
       - env:
           GH_TOKEN: ${{ github.token }}
           SHA: ${{ github.event.workflow_run.head_sha }}
@@ -43,11 +50,21 @@ jobs:
           version=$(cat VERSION)
           min_panel=$(cat MIN_PANEL)
           short=$(echo "$SHA" | cut -c1-7)
-          digest=$(docker buildx imagetools inspect "$IMAGE:$version-$short" --format '{{json .Manifest}}' | jq -r .digest)
-          case "$digest" in sha256:*) ;; *) echo "no image $IMAGE:$version-$short"; exit 1 ;; esac
+          digest=$(cat release/digest)
+          case "$digest" in sha256:*) ;; *) echo "no digest from build run"; exit 1 ;; esac
+          tagged=$(docker buildx imagetools inspect "$IMAGE:$version-$short" --format '{{json .Manifest}}' | jq -r .digest)
+          [ "$tagged" = "$digest" ] || { echo "$IMAGE:$version-$short is $tagged, the build made $digest"; exit 1; }
           security=$(gh api "repos/$GITHUB_REPOSITORY/commits/$SHA/pulls" --jq '[.[].labels[].name] | index("security") != null')
           gh release view channels >/dev/null 2>&1 || gh release create channels --title channels --notes "Signed manifests of edge images" --latest=false
-          gh release download channels -p stable.json -O old.json 2>/dev/null || echo '{"channel":"stable","images":[]}' >old.json
+          assets=$(gh release view channels --json assets --jq '[.assets[].name] | join(" ")')
+          case " $assets " in
+          *" stable.json "*)
+            gh release download channels -p stable.json -O old.json
+            gh release download channels -p stable.json.minisig -O old.json.minisig
+            minisign -V -p keys/edge.pub -m old.json -x old.json.minisig
+            ;;
+          *) echo '{"channel":"stable","images":[]}' >old.json ;;
+          esac
           jq --arg v "$version" --arg img "$IMAGE@$digest" --arg min "$min_panel" --argjson sec "$security" --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             '{channel: "stable", images: ([{version: $v, image: $img, min_panel: $min, security: $sec, published_at: $at}] + [.images[] | select(.image != $img)])[:20]}' \
             old.json >stable.json

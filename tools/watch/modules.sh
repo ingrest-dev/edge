@@ -20,7 +20,7 @@ pattern() {
 
 newest() {
 	local refs tag sha
-	refs=$(git ls-remote --tags "https://github.com/$2")
+	refs=$(git ls-remote --tags "https://github.com/$2") || return 1
 	tag=$(printf '%s\n' "$refs" | sed -n 's|.*refs/tags/\([^^]*\)$|\1|p' | grep -E "$(pattern "$1")" | sed 's/rc/~rc/' | sort -V | tail -n 1 | sed 's/~rc/rc/')
 	[ -n "$tag" ] || return 1
 	sha=$(printf '%s\n' "$refs" | awk -v t="refs/tags/$tag^{}" '$2 == t {print $1}')
@@ -37,7 +37,9 @@ for g in "${groups[@]}"; do
 		arg=${m%%:*}
 		repo=${m#*:}
 		cur=$(sed -n "s/^ARG $arg=//p" Dockerfile)
-		read -r tag sha <<<"$(newest "$arg" "$repo")"
+		out=$(newest "$arg" "$repo") || { echo "no release tag for $repo" >&2; exit 1; }
+		read -r tag sha <<<"$out"
+		[[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo "bad sha '$sha' for $repo $tag" >&2; exit 1; }
 		tags+=("${repo#*/} $tag")
 		edits+=("s/^ARG $arg=.*/ARG $arg=$sha/")
 		[ "$sha" = "$cur" ] || changed=true

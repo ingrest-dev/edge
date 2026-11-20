@@ -51,6 +51,8 @@ type table struct {
 	Directives map[string][]form `json:"directives"`
 }
 
+var debugOnly = map[string]bool{"debug_connection": true}
+
 var (
 	nameRe = regexp.MustCompile(`^\s*"([^"]+)": \{$`)
 	maskRe = regexp.MustCompile(`^\s*(ngx[A-Za-z0-9 |]+),$`)
@@ -100,7 +102,7 @@ func run(genPath, source, out string) error {
 			name = m[1]
 			continue
 		}
-		if m := maskRe.FindStringSubmatch(sc.Text()); m != nil && name != "" {
+		if m := maskRe.FindStringSubmatch(sc.Text()); m != nil && name != "" && !debugOnly[name] {
 			f, err := parse(m[1])
 			if err != nil {
 				return fmt.Errorf("%s: %w", name, err)

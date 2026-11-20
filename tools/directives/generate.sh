@@ -9,7 +9,11 @@ tree=$(mktemp -d)
 for m in nginx ndk lua stream-lua brotli zstd geoip2 modsecurity; do
     cp -r "$src/$m" "$tree/$m"
 done
-rm -rf "$tree"/nginx/src/mail "$tree"/nginx/src/http/modules/perl "$tree"/brotli/deps "$tree"/*/.git
+rm -rf "$tree"/nginx/src/mail "$tree"/nginx/src/http/modules/perl "$tree"/nginx/src/os/win32 "$tree"/brotli/deps "$tree"/*/.git \
+    "$tree"/lua/t "$tree"/stream-lua/t "$tree"/ndk/examples "$tree"/ndk/t
+for m in kqueue devpoll eventport iocp win32_poll win32_select; do
+    rm -f "$tree"/nginx/src/event/modules/ngx_${m}_module.c
+done
 for m in image_filter xslt_filter geoip degradation; do
     rm -f "$tree"/nginx/src/http/modules/ngx_http_${m}_module.c
 done

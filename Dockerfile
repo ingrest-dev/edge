@@ -42,16 +42,23 @@ RUN fetch() { git init -q "$1" && git -C "$1" fetch -q --depth 1 "https://github
     && rm -rf brotli/deps/brotli && fetch brotli/deps/brotli google/brotli "${BROTLI_LIB}" \
     && fetch zstd tokers/zstd-nginx-module "${ZSTD}" \
     && fetch geoip2 leev/ngx_http_geoip2_module "${GEOIP2}" \
-    && fetch modsecurity owasp-modsecurity/ModSecurity-nginx "${MODSECURITY}" \
-    && printf '%s\n' "${VERSION}" "${LUAJIT}" "${NDK}" "${LUA}" "${STREAM_LUA}" "${RESTY_CORE}" "${RESTY_LRUCACHE}" "${RESTY_STRING}" "${CJSON}" \
-        "${BROTLI}" "${BROTLI_LIB}" "${ZSTD}" "${GEOIP2}" "${MODSECURITY}" | sha256sum | cut -c1-16 >/src/fingerprint
+    && fetch modsecurity owasp-modsecurity/ModSecurity-nginx "${MODSECURITY}"
+
+COPY patches /patches
+RUN for d in /patches/*/; do \
+        [ -d "$d" ] || continue; \
+        for p in "$d"*.patch; do [ ! -e "$p" ] || git -C "/src/$(basename "$d")" apply "$p" || exit 1; done; \
+    done \
+    && { printf '%s\n' "${VERSION}" "${LUAJIT}" "${NDK}" "${LUA}" "${STREAM_LUA}" "${RESTY_CORE}" "${RESTY_LRUCACHE}" "${RESTY_STRING}" "${CJSON}" \
+        "${BROTLI}" "${BROTLI_LIB}" "${ZSTD}" "${GEOIP2}" "${MODSECURITY}"; find /patches -name '*.patch' -type f | sort | xargs -r cat; } \
+        | sha256sum | cut -c1-16 >/src/fingerprint
 
 FROM golang:1.27.4-trixie@sha256:b54b2639de8c1bfe538ec5ffc45f29b1932235ac5f6d63c059853646677112d9 AS directives
 
 ENV GOTOOLCHAIN=local GOTELEMETRY=off GOFLAGS=-mod=mod
 COPY --from=sources /src /src
 COPY tools/directives /tools/directives
-RUN sh /tools/directives/generate.sh /src "$(cat /src/fingerprint)" /directives.json
+RUN sh /tools/directives/generate.sh /src "$(cat /src/fingerprint /tools/directives/generate.sh /tools/directives/main.go | sha256sum | cut -c1-16)" /directives.json
 
 FROM sources AS build
 
@@ -61,7 +68,6 @@ RUN apt-get update \
         libssl-dev libpcre2-dev zlib1g-dev libmaxminddb-dev libzstd-dev libmodsecurity-dev \
     && rm -rf /var/lib/apt/lists/*
 
-COPY patches /patches
 COPY build.sh /build.sh
 RUN sh /build.sh "${VERSION}"
 

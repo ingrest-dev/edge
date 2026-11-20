@@ -6,13 +6,6 @@ LJ=/usr/local/luajit
 LIB=$P/lualib
 cd /src
 
-for d in /patches/*/; do
-	[ -d "$d" ] || continue
-	for p in "$d"*.patch; do
-		[ ! -e "$p" ] || git -C "/src/$(basename "$d")" apply "$p"
-	done
-done
-
 cmake -S brotli/deps/brotli -B brotli/deps/brotli/out -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DBROTLI_DISABLE_TESTS=ON >/dev/null
 cmake --build brotli/deps/brotli/out --target brotlienc -j"$(nproc)" >/dev/null
 
