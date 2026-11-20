@@ -6,7 +6,7 @@ Web server image for the [Ingrest](https://github.com/ingrest-dev) panel: nginx 
 
 - nginx from nginx.org, verified against the signing keys in `keys/nginx.gpg`.
 - Static modules: `lua-nginx-module`, `stream-lua-nginx-module`, `ngx_devel_kit`; LuaJIT 2.1.
-- Dynamic modules: brotli, zstd, GeoIP2 (HTTP), ModSecurity.
+- Dynamic modules: brotli, zstd (`GetPageSpeed/zstd-nginx-module`), GeoIP2 (HTTP), ModSecurity.
 - Lua libraries: `resty.core`, `resty.lrucache`, `resty.string` (`sha256`, `random`), `cjson`.
 - Every source is pinned in the `Dockerfile` by version or commit and checked at build time.
 
@@ -22,7 +22,8 @@ Web server image for the [Ingrest](https://github.com/ingrest-dev) panel: nginx 
 `VERSION` is `<nginx version>.<build>`; the image reports the build in `nginx -v` as `ingrest-<build>`.
 
 - `watch` checks the nginx mainline hourly. A new signed release opens a pull request that bumps `VERSION`; when its CHANGES entry has security fixes, the pull request is labelled `security` and lists them.
-- `watch` also checks the module tags hourly and opens one pull request per group; `lua-nginx-module`, `stream-lua-nginx-module` and `lua-resty-core` move together.
+- `watch` also checks every module hourly (release tags; `ngx_brotli` and the GeoIP2 module by their default branch, they have no current tags) and opens one pull request per group; `lua-nginx-module`, `stream-lua-nginx-module` and `lua-resty-core` move together.
+- A module pull request lists the compared commits and is labelled `security` when a commit subject names a CVE, an advisory or a memory safety fix.
 - `scan` runs Trivy on the newest published image every 6 hours: fixable HIGH or CRITICAL Debian packages open a `security` pull request that changes `REFRESH`, which makes the runtime stage reinstall and upgrade its packages.
 - `patches/` is for emergencies only (see `patches/README.md`).
 
