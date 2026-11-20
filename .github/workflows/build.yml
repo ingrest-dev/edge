@@ -151,3 +151,30 @@ jobs:
           subject-name: ${{ env.IMAGE }}
           subject-digest: ${{ steps.index.outputs.digest }}
           push-to-registry: true
+
+  automerge:
+    needs: merge
+    if: github.event_name == 'workflow_dispatch' && startsWith(github.ref_name, 'nginx-')
+    runs-on: ubuntu-24.04
+    concurrency:
+      group: automerge
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          pr=$(gh pr list -R "$GITHUB_REPOSITORY" --head "$BRANCH" --state open --json number,author,headRefOid,files,baseRefName \
+            --jq "[.[] | select(.author.login == \"app/github-actions\" and .baseRefName == \"main\" and .headRefOid == \"$GITHUB_SHA\" and ([.files[].path] == [\"VERSION\"]))] | if length == 1 then .[0].number else empty end")
+          if [ -z "$pr" ]; then
+            echo "no bot pull request from $BRANCH at $GITHUB_SHA that changes only VERSION: leaving it to review"
+            exit 0
+          fi
+          want="${BRANCH#nginx-}.1"
+          got=$(gh api "repos/$GITHUB_REPOSITORY/contents/VERSION?ref=$GITHUB_SHA" --jq .content | base64 -d)
+          [ "$got" = "$want" ] || { echo "VERSION is '$got', the branch wants $want"; exit 1; }
+          gh pr merge "$pr" -R "$GITHUB_REPOSITORY" --squash --match-head-commit "$GITHUB_SHA" --delete-branch
+          gh workflow run build.yml -R "$GITHUB_REPOSITORY" --ref main

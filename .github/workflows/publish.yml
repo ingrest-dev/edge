@@ -16,10 +16,33 @@ env:
   IMAGE: ghcr.io/ingrest-dev/edge
 
 jobs:
-  publish:
+  route:
     if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.event != 'pull_request'
     runs-on: ubuntu-24.04
-    environment: release
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      environment: ${{ steps.route.outputs.environment }}
+    steps:
+      - id: route
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          env=release
+          files=$(gh api "repos/$GITHUB_REPOSITORY/commits/$SHA" --jq '[.files[].filename] | join(" ")')
+          pr=$(gh api "repos/$GITHUB_REPOSITORY/commits/$SHA/pulls" --jq '[.[] | select(.merged_at != null and .user.login == "github-actions[bot]" and (.head.ref | startswith("nginx-")))] | length')
+          if [ "$files" = VERSION ] && [ "$pr" = 1 ]; then
+            env=release-auto
+          fi
+          echo "commit changes '$files', bot nginx pull requests: $pr, environment $env"
+          echo "environment=$env" >>"$GITHUB_OUTPUT"
+
+  publish:
+    needs: route
+    runs-on: ubuntu-24.04
+    environment: ${{ needs.route.outputs.environment }}
     permissions:
       contents: write
       packages: read
