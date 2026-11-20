@@ -58,12 +58,21 @@ jobs:
           echo "environment=$env" >>"$GITHUB_OUTPUT"
           echo "prev=$prev" >>"$GITHUB_OUTPUT"
 
-  publish:
+  approve:
     needs: route
+    if: needs.route.outputs.environment == 'release'
     runs-on: ubuntu-24.04
-    environment: ${{ needs.route.outputs.environment }}
+    environment: release
+    steps:
+      - run: echo "approved"
+
+  publish:
+    needs: [route, approve]
+    if: always() && needs.route.result == 'success' && (needs.approve.result == 'success' || (needs.approve.result == 'skipped' && needs.route.outputs.environment == 'release-auto'))
+    runs-on: ubuntu-24.04
+    environment: channel
     concurrency:
-      group: publish-${{ needs.route.outputs.environment }}
+      group: publish
       cancel-in-progress: false
     permissions:
       contents: write
@@ -91,8 +100,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           SHA: ${{ github.event.workflow_run.head_sha }}
           EDGE_KEY: ${{ secrets.EDGE_KEY }}
-          ROUTE: ${{ needs.route.outputs.environment }}
           PREV: ${{ needs.route.outputs.prev }}
+          APPROVE: ${{ needs.approve.result }}
         run: |
           version=$(cat VERSION)
           min_panel=$(cat MIN_PANEL)
@@ -102,16 +111,6 @@ jobs:
           tagged=$(docker buildx imagetools inspect "$IMAGE:$version-$short" --format '{{json .Manifest}}' | jq -r .digest)
           [ "$tagged" = "$digest" ] || { echo "$IMAGE:$version-$short is $tagged, the build made $digest"; exit 1; }
           security=$(gh api "repos/$GITHUB_REPOSITORY/commits/$SHA/pulls" --jq '[.[].labels[].name] | index("security") != null')
-          unlock() { gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/heads/publish-lock" >/dev/null 2>&1 || true; }
-          for i in $(seq 1 90); do
-            if gh api -X POST "repos/$GITHUB_REPOSITORY/git/refs" -f ref=refs/heads/publish-lock -f sha="$SHA" >/dev/null 2>&1; then
-              locked=1
-              break
-            fi
-            sleep 10
-          done
-          [ -n "${locked:-}" ] || { echo "branch publish-lock is held for 15 minutes; delete it when no publish runs"; exit 1; }
-          trap unlock EXIT
           if gh release view channels >/dev/null 2>&1; then
             gh release download channels -p stable.json -O old.json
             gh release download channels -p stable.json.minisig -O old.json.minisig
@@ -120,9 +119,18 @@ jobs:
             gh release create channels --title channels --notes "Signed manifests of edge images" --latest=false
             echo '{"channel":"stable","images":[]}' >old.json
           fi
-          if [ "$ROUTE" = release-auto ]; then
-            newest=$(jq -r '[.images[] | select(.commit != null)] | sort_by(.published_at) | last | .commit // empty' old.json)
-            [ "$newest" = "$PREV" ] || { echo "the channel moved from $PREV to $newest since the route check"; exit 1; }
+          newest=$(jq -r '[.images[] | select(.commit != null)] | sort_by(.published_at) | last | .commit // empty' old.json)
+          if [ "$newest" = "$SHA" ] && jq -e --arg img "$IMAGE@$digest" '.images | any(.image == $img)' old.json >/dev/null; then
+            echo "$SHA is already published as $IMAGE@$digest"
+            exit 0
+          fi
+          if [ -n "$newest" ] && [ "$(gh api "repos/$GITHUB_REPOSITORY/compare/$SHA...$newest" --jq .status)" = ahead ]; then
+            echo "$newest, newer than $SHA, is already published"
+            exit 1
+          fi
+          if [ "$APPROVE" = skipped ] && [ "$newest" != "$PREV" ]; then
+            echo "the channel moved from $PREV to $newest since the route check"
+            exit 1
           fi
           jq --arg v "$version" --arg img "$IMAGE@$digest" --arg min "$min_panel" --argjson sec "$security" --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg commit "$SHA" \
             '{channel: "stable", images: ([{version: $v, image: $img, min_panel: $min, security: $sec, published_at: $at, commit: $commit}] + [.images[] | select(.image != $img)])[:20]}' \
@@ -132,9 +140,30 @@ jobs:
           minisign -S -s edge.key -m stable.json -t "file:stable.json version:$version"
           rm edge.key
           minisign -V -p keys/edge.pub -m stable.json
-          gh release upload channels stable.json stable.json.minisig --clobber
-          gh release download channels -p stable.json -O check.json
-          gh release download channels -p stable.json.minisig -O check.json.minisig
-          minisign -V -p keys/edge.pub -m check.json -x check.json.minisig
-          cmp -s stable.json check.json || { echo "stable.json in the release differs from the one just signed"; exit 1; }
-          cat stable.json >>"$GITHUB_STEP_SUMMARY"
+          check() {
+            for i in 1 2 3 4 5 6; do
+              rm -f check.json check.json.minisig
+              if gh release download channels -p stable.json -O check.json 2>/dev/null &&
+                gh release download channels -p stable.json.minisig -O check.json.minisig 2>/dev/null &&
+                minisign -V -q -p keys/edge.pub -m check.json -x check.json.minisig && cmp -s "$1" check.json; then
+                return 0
+              fi
+              sleep 5
+            done
+            return 1
+          }
+          mkdir -p previous
+          if [ -f old.json.minisig ]; then
+            cp old.json previous/stable.json
+            cp old.json.minisig previous/stable.json.minisig
+          fi
+          if gh release upload channels stable.json stable.json.minisig --clobber && check stable.json; then
+            cat stable.json >>"$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          echo "the new manifest did not land; putting the previous one back"
+          if [ -f previous/stable.json ]; then
+            gh release upload channels previous/stable.json previous/stable.json.minisig --clobber && check previous/stable.json \
+              || echo "the previous manifest did not land either: upload previous/stable.json and its .minisig by hand"
+          fi
+          exit 1
