@@ -1,0 +1,60 @@
+name: publish
+
+on:
+  workflow_run:
+    workflows: [build]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish
+
+env:
+  IMAGE: ghcr.io/ingrest-dev/edge
+
+jobs:
+  publish:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.event != 'pull_request'
+    runs-on: ubuntu-24.04
+    environment: release
+    permissions:
+      contents: write
+      packages: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: false
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - run: sudo apt-get install -y --no-install-recommends minisign
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
+          EDGE_KEY: ${{ secrets.EDGE_KEY }}
+        run: |
+          version=$(cat VERSION)
+          min_panel=$(cat MIN_PANEL)
+          short=$(echo "$SHA" | cut -c1-7)
+          digest=$(docker buildx imagetools inspect "$IMAGE:$version-$short" --format '{{json .Manifest}}' | jq -r .digest)
+          case "$digest" in sha256:*) ;; *) echo "no image $IMAGE:$version-$short"; exit 1 ;; esac
+          security=$(gh api "repos/$GITHUB_REPOSITORY/commits/$SHA/pulls" --jq '[.[].labels[].name] | index("security") != null')
+          gh release view channels >/dev/null 2>&1 || gh release create channels --title channels --notes "Signed manifests of edge images" --latest=false
+          gh release download channels -p stable.json -O old.json 2>/dev/null || echo '{"channel":"stable","images":[]}' >old.json
+          jq --arg v "$version" --arg img "$IMAGE@$digest" --arg min "$min_panel" --argjson sec "$security" --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '{channel: "stable", images: ([{version: $v, image: $img, min_panel: $min, security: $sec, published_at: $at}] + [.images[] | select(.image != $img)])[:20]}' \
+            old.json >stable.json
+          umask 077
+          printf '%s\n' "$EDGE_KEY" >edge.key
+          minisign -S -s edge.key -m stable.json -t "file:stable.json version:$version"
+          rm edge.key
+          minisign -V -p keys/edge.pub -m stable.json
+          gh release upload channels stable.json stable.json.minisig --clobber
+          cat stable.json >>"$GITHUB_STEP_SUMMARY"
