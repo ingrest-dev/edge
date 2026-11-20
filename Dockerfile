@@ -50,7 +50,7 @@ RUN for d in /patches/*/; do \
         for p in "$d"*.patch; do [ ! -e "$p" ] || git -C "/src/$(basename "$d")" apply "$p" || exit 1; done; \
     done \
     && { printf '%s\n' "${VERSION}" "${LUAJIT}" "${NDK}" "${LUA}" "${STREAM_LUA}" "${RESTY_CORE}" "${RESTY_LRUCACHE}" "${RESTY_STRING}" "${CJSON}" \
-        "${BROTLI}" "${BROTLI_LIB}" "${ZSTD}" "${GEOIP2}" "${MODSECURITY}"; find /patches -name '*.patch' -type f | sort | xargs -r cat; } \
+        "${BROTLI}" "${BROTLI_LIB}" "${ZSTD}" "${GEOIP2}" "${MODSECURITY}"; find /patches -name '*.patch' -type f | sort | xargs -r sha256sum; } \
         | sha256sum | cut -c1-16 >/src/fingerprint
 
 FROM golang:1.27.4-trixie@sha256:b54b2639de8c1bfe538ec5ffc45f29b1932235ac5f6d63c059853646677112d9 AS directives
