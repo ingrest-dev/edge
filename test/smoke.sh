@@ -51,6 +51,10 @@ got=$(curl -s -o /dev/null -w '%{http_code}' 'http://127.0.0.1:18080/waf?x=bad')
 [ "$got" = 403/pass ] || fail "modsecurity: got '$got'"
 got=$(docker exec "$name" curl -sk --http3-only -o /dev/null -w '%{http_version} %{http_code}' https://127.0.0.1:8443/)
 [ "$got" = "3 200" ] || fail "HTTP/3: got '$got'"
+got=$(curl -sk --http2 https://127.0.0.1:18443/hello https://127.0.0.1:18443/hello | tr '\n' ' ')
+[ "$got" = "tcp ok tcp ok " ] || fail "ssl_client_hello_by_lua, clienthello API or ngx.ctx to requests: got '$got'"
+got=$(docker exec "$name" curl -sk --http3-only https://127.0.0.1:8443/hello https://127.0.0.1:8443/hello | tr '\n' ' ')
+[ "$got" = "quic ok quic ok " ] || fail "ssl_client_hello_by_lua over QUIC: got '$got'"
 got=$(curl -fs http://127.0.0.1:19000/)
 [ "$got" = backend ] || fail "stream balancer_by_lua: got '$got'"
 for c in fallback lua; do

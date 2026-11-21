@@ -31,7 +31,7 @@ Web server image for the [Ingrest](https://github.com/ingrest-dev) panel: nginx 
 ## Releases
 
 - Every pull request builds `ghcr.io/ingrest-dev/edge:test-<version>-<commit>` for amd64 and arm64 and runs `test/smoke.sh`. Test it on a panel by pinning that tag.
-- `test/smoke.sh` covers what the panel's Lua uses: every phase (init, init_worker, ssl_certificate, balancer with retries, header_filter, log, stream preread, balancer and log), timers, light threads, cosockets, shared dicts, request bodies, the bundled libraries, brotli, zstd, ModSecurity, HTTP/3 and stream SNI passthrough.
+- `test/smoke.sh` covers what the panel's Lua uses: every phase (init, init_worker, ssl_client_hello with `ngx.ssl.clienthello` and `ngx.ctx` passed to requests over TCP and QUIC, ssl_certificate, balancer with retries, header_filter, log, stream preread, balancer and log), timers, light threads, cosockets, shared dicts, request bodies, the bundled libraries, brotli, zstd, ModSecurity, HTTP/3 and stream SNI passthrough.
 - A merge to `main` publishes `<version>` and `<version>-<commit>`, then `publish` waits for approval in the `release` environment and adds the image digest to the signed manifest `stable.json` in the release `channels`. Signing runs one at a time in the `channel` environment, which holds `EDGE_KEY`; it refuses a build older than the newest published one and puts the previous manifest back when an upload fails.
 - Panels take the newest image in the manifest whose `min_panel` is not above their own version. Set `MIN_PANEL` in the pull request when an image needs a newer panel.
 - Label a pull request `security` to let panels with automatic security updates install it at once.
