@@ -160,6 +160,7 @@ jobs:
       packages: read
       pull-requests: read
     uses: ./.github/workflows/publish.yml
+    secrets: inherit
 
   automerge:
     needs: merge
