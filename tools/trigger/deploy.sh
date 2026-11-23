@@ -7,7 +7,7 @@ auth="Authorization: Bearer $CLOUDFLARE_API_TOKEN"
 json="Content-Type: application/json"
 
 curl -fsS -X PUT "$api" -H "$auth" \
-	-F 'metadata={"main_module":"worker.js","compatibility_date":"2026-11-01","keep_bindings":["secret_text"]};type=application/json' \
+	-F 'metadata={"main_module":"worker.js","compatibility_date":"2026-11-01","keep_bindings":["secret_text"],"observability":{"enabled":true}};type=application/json' \
 	-F "worker.js=@$dir/worker.js;type=application/javascript+module" >/dev/null
 if [ -n "${GITHUB_TOKEN:-}" ]; then
 	jq -n --arg t "$GITHUB_TOKEN" '{name: "GITHUB_TOKEN", text: $t, type: "secret_text"}' |

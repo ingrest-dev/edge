@@ -130,7 +130,7 @@ jobs:
             exit 1
           fi
           jq --arg v "$version" --arg img "$IMAGE@$digest" --arg min "$min_panel" --argjson sec "$security" --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg commit "$SHA" \
-            '{channel: "stable", images: ([{version: $v, image: $img, min_panel: $min, security: $sec, published_at: $at, commit: $commit}] + [.images[] | select(.image != $img)])[:20]}' \
+            'any(.images[]; .image == $img and .security == true) as $was | {channel: "stable", images: ([{version: $v, image: $img, min_panel: $min, security: ($sec or $was), published_at: $at, commit: $commit}] + [.images[] | select(.image != $img)])[:20]}' \
             old.json >stable.json
           umask 077
           printf '%s\n' "$EDGE_KEY" >edge.key

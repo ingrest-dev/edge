@@ -43,6 +43,14 @@ export async function check(env) {
   if (branch.ok) return `branch nginx-${latest} exists`;
   if (branch.status !== 404) throw new Error(`branch nginx-${latest}: ${branch.status}`);
 
+  const runs = await gh(env, `/repos/${REPO}/actions/workflows/watch.yml/runs?per_page=1`);
+  if (!runs.ok) throw new Error(`watch runs: ${runs.status}`);
+  const last = (await runs.json()).workflow_runs?.[0];
+  if (last && last.status !== "completed") return `watch is ${last.status}`;
+  if (last && last.conclusion === "failure" && Date.now() - Date.parse(last.created_at) < 3600_000) {
+    return `watch failed at ${last.created_at}, next try an hour later`;
+  }
+
   const run = await gh(env, `/repos/${REPO}/actions/workflows/watch.yml/dispatches`, {
     method: "POST",
     headers: { "content-type": "application/json" },
