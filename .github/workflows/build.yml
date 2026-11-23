@@ -152,6 +152,15 @@ jobs:
           subject-digest: ${{ steps.index.outputs.digest }}
           push-to-registry: true
 
+  publish:
+    needs: merge
+    if: always() && needs.merge.result == 'success' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    permissions:
+      contents: write
+      packages: read
+      pull-requests: read
+    uses: ./.github/workflows/publish.yml
+
   automerge:
     needs: merge
     if: github.event_name == 'workflow_dispatch' && startsWith(github.ref_name, 'nginx-')
