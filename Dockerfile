@@ -3,17 +3,18 @@ FROM debian:trixie-20261104-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a6
 ARG VERSION
 ARG LUAJIT=2769af8852a4b32687dfdfc55040c4cb4e6a8417
 ARG NDK=3bd7c5619312ca562c5fd5dda238cb8d73bf2a1d
-ARG LUA=0b5ce7ed53591f212c73378a027dd65e7da3a932
-ARG STREAM_LUA=57ff1388e020bf918b243f2bae809fa8c84e39b8
+ARG LUA=f6fe3515ee3494b54ac1867e29cbcd773e5e26c1
+ARG STREAM_LUA=6cc2b8d3de895dacae406e6873cd5b4833190f5d
 ARG RESTY_CORE=8c8091a829fc5209980821c3845f936851d5c5e5
-ARG RESTY_LRUCACHE=3ff6300e68b73ba20e909c7d16bd839aef2e5a4b
-ARG RESTY_STRING=282590f58d4c927226492e0211b974d72b759329
+ARG RESTY_LRUCACHE=20869bd34742fa20344c29fe31d4d6506d6827bf
+ARG RESTY_STRING=be19d0f70548a2deb73f5b426af51541be0d7ef9
 ARG CJSON=5f53e878d0441e1555f53060178c61d161079e06
 ARG BROTLI=53e0fb55f250f48fe80c0ddbf6c0f7103cdbaae1
 ARG BROTLI_LIB=db24a98aed38a16de78cc05ca15cdd8dc2a0d92d
-ARG ZSTD=6bce903d3f02416d478fb11efeb0303945bdbca9
+ARG ZSTD=4a0019c89b18ed7a6d27967aab9c3a26f566788b
 ARG GEOIP2=445df24ef3781e488cee3dfe8a1e111997fc1dfe
-ARG MODSECURITY=3f4b57df10ce43b1f1c722141f7621dc64838be8
+ARG MODSECURITY=8de0e0ec5b786d9a6f2d23133f63eced730b2f7d
+ARG LIBMODSECURITY=1925753989ccce977cdaae417b55c9726c7cf02c
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl git gpgv \
@@ -42,7 +43,9 @@ RUN fetch() { git init -q "$1" && git -C "$1" fetch -q --depth 1 "https://github
     && rm -rf brotli/deps/brotli && fetch brotli/deps/brotli google/brotli "${BROTLI_LIB}" \
     && fetch zstd GetPageSpeed/zstd-nginx-module "${ZSTD}" \
     && fetch geoip2 leev/ngx_http_geoip2_module "${GEOIP2}" \
-    && fetch modsecurity owasp-modsecurity/ModSecurity-nginx "${MODSECURITY}"
+    && fetch modsecurity owasp-modsecurity/ModSecurity-nginx "${MODSECURITY}" \
+    && fetch libmodsecurity owasp-modsecurity/ModSecurity "${LIBMODSECURITY}" \
+    && git -C libmodsecurity submodule update -q --init --recursive --depth 1 others/libinjection others/mbedtls
 
 COPY patches /patches
 RUN for d in /patches/*/; do \
@@ -50,7 +53,7 @@ RUN for d in /patches/*/; do \
         for p in "$d"*.patch; do [ ! -e "$p" ] || git -C "/src/$(basename "$d")" apply "$p" || exit 1; done; \
     done \
     && { printf '%s\n' "${VERSION}" "${LUAJIT}" "${NDK}" "${LUA}" "${STREAM_LUA}" "${RESTY_CORE}" "${RESTY_LRUCACHE}" "${RESTY_STRING}" "${CJSON}" \
-        "${BROTLI}" "${BROTLI_LIB}" "${ZSTD}" "${GEOIP2}" "${MODSECURITY}"; find /patches -name '*.patch' -type f | sort | xargs -r sha256sum; } \
+        "${BROTLI}" "${BROTLI_LIB}" "${ZSTD}" "${GEOIP2}" "${MODSECURITY}" "${LIBMODSECURITY}"; find /patches -name '*.patch' -type f | sort | xargs -r sha256sum; } \
         | sha256sum | cut -c1-16 >/src/fingerprint
 
 FROM golang:1.27.4-trixie@sha256:f18c3d73a184fb0582828510722e723b63a93f7188d11dd223d9be6f6880e65d AS directives
@@ -64,8 +67,8 @@ FROM sources AS build
 
 ARG VERSION
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends build-essential cmake perl pkg-config \
-        libssl-dev libpcre2-dev zlib1g-dev libmaxminddb-dev libzstd-dev libmodsecurity-dev \
+    && apt-get install -y --no-install-recommends build-essential cmake perl pkg-config autoconf automake libtool \
+        libssl-dev libpcre2-dev zlib1g-dev libmaxminddb-dev libzstd-dev libyajl-dev \
     && rm -rf /var/lib/apt/lists/*
 
 COPY build.sh /build.sh
@@ -83,11 +86,12 @@ LABEL dev.ingrest.image=edge \
 RUN --mount=type=bind,source=REFRESH,target=/tmp/refresh apt-get update \
     && apt-get upgrade -y --no-install-recommends \
     && apt-get install -y --no-install-recommends ca-certificates curl \
-        libssl3t64 libpcre2-8-0 zlib1g libmaxminddb0 libzstd1 libmodsecurity3t64 \
+        libssl3t64 libpcre2-8-0 zlib1g libmaxminddb0 libzstd1 libyajl2 libstdc++6 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=build /usr/local/nginx /usr/local/nginx
 COPY --from=build /usr/local/luajit /usr/local/luajit
+COPY --from=build /usr/local/modsecurity/lib /usr/local/modsecurity/lib
 COPY --from=directives /directives.json /usr/local/nginx/directives.json
 ENV PATH=/usr/local/nginx/sbin:$PATH
 STOPSIGNAL SIGQUIT
