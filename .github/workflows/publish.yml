@@ -125,6 +125,8 @@ jobs:
             *) echo "the published $newest is $order of $SHA: not publishing an older build"; exit 1 ;;
             esac
           fi
+          other=$(jq -r --arg v "$version" --arg img "$IMAGE@$digest" '[.images[] | select(.version == $v and .image != $img)] | first | .image // empty' old.json)
+          [ -z "$other" ] || { echo "version $version is already published as $other: bump the build number in VERSION"; exit 1; }
           if [ "$APPROVE" = skipped ] && [ "$newest" != "$PREV" ]; then
             echo "the channel moved from $PREV to $newest since the route check"
             exit 1
