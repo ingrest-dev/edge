@@ -1,0 +1,2 @@
+CVE-2026-107494 OpenSSL's own QUIC stack; nginx runs its own QUIC and takes only the TLS handshake from OpenSSL
+CVE-2026-124709 OpenSSL's own QUIC stack; nginx runs its own QUIC and takes only the TLS handshake from OpenSSL
