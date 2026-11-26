@@ -49,6 +49,12 @@ got=$(curl -s -o /dev/null -w '%{http_code}' --data-binary edge http://127.0.0.1
 [ "$got" = 403 ] || fail "ngx.status 403: got '$got'"
 got=$(curl -s -o /dev/null -w '%{http_code}' 'http://127.0.0.1:18080/waf?x=bad')/$(curl -fs 'http://127.0.0.1:18080/waf?x=good')
 [ "$got" = 403/pass ] || fail "modsecurity: got '$got'"
+upload() {
+	printf -- '--b\r\nContent-Disposition: form-data; name="f"; %s\r\n\r\nx\r\n--b--\r\n' "$1" >"$work/upload"
+	curl -s -o /dev/null -w '%{http_code}' -H 'Content-Type: multipart/form-data; boundary=b' --data-binary "@$work/upload" http://127.0.0.1:18080/waf
+}
+got=$(upload 'filename="ok.txt"')/$(upload "filename=\"ok.txt\"; filename*=UTF-8''shell.php")
+[ "$got" = 200/403 ] || fail "modsecurity multipart filename*: got '$got'"
 got=$(docker exec "$name" curl -sk --http3-only -o /dev/null -w '%{http_version} %{http_code}' https://127.0.0.1:8443/)
 [ "$got" = "3 200" ] || fail "HTTP/3: got '$got'"
 got=$(curl -sk --http2 https://127.0.0.1:18443/hello https://127.0.0.1:18443/hello | tr '\n' ' ')

@@ -7,6 +7,7 @@ Web server image for the [Ingrest](https://github.com/ingrest-dev) panel: nginx 
 - nginx from nginx.org, verified against the signing keys in `keys/nginx.gpg`.
 - Static modules: `lua-nginx-module`, `stream-lua-nginx-module`, `ngx_devel_kit`; LuaJIT 2.1.
 - Dynamic modules: brotli, zstd (`GetPageSpeed/zstd-nginx-module`), GeoIP2 (HTTP), ModSecurity.
+- libmodsecurity built from its release with JSON (yajl) and PCRE2 only: no XML body processor, remote rules, Lua scripts, GeoIP, LMDB or ssdeep.
 - Lua libraries: `resty.core`, `resty.lrucache`, `resty.string` (`sha256`, `random`), `cjson`.
 - Every source is pinned in the `Dockerfile` by version or commit and checked at build time.
 
@@ -23,8 +24,10 @@ Web server image for the [Ingrest](https://github.com/ingrest-dev) panel: nginx 
 
 - `watch` checks the nginx mainline hourly, but GitHub drops most scheduled runs: the Cloudflare Worker in `tools/trigger` checks nginx.org every 5 minutes and dispatches `watch` when a newer signed mainline has no `nginx-<version>` branch yet. Deploy it with `CLOUDFLARE_API_TOKEN` (Workers Scripts: Edit), `CLOUDFLARE_ACCOUNT_ID` and, the first time or to rotate it, `GITHUB_TOKEN` (fine-grained, this repository, Actions: write) in `tools/trigger/deploy.sh`. A new signed release opens a pull request that bumps `VERSION`; when its CHANGES entry has security fixes, the pull request is labelled `security` and lists them.
 - nginx releases are automatic: when the bot pull request builds and passes the smoke test on both architectures and changes only `VERSION`, `build` merges it, builds `main`, and `publish` signs it without review, but only when `VERSION` is the only file changed since the commit of the last published image (`commit` in `stable.json`). Anything else, modules included, waits for a merge and the `release` approval.
-- `watch` also checks every module hourly (release tags; `ngx_brotli` and the GeoIP2 module by their default branch, they have no current tags) and opens one pull request per group; `lua-nginx-module`, `stream-lua-nginx-module` and `lua-resty-core` move together.
-- A module pull request lists the compared commits and is labelled `security` when a commit subject names a CVE, an advisory or a memory safety fix.
+- `watch` also checks every module and libmodsecurity hourly (release tags; `ngx_brotli` and the GeoIP2 module by their default branch, they have no current tags) and opens one pull request per group; `lua-nginx-module`, `stream-lua-nginx-module` and `lua-resty-core` move together.
+- A module pull request lists the compared commits and the repository's published security advisories since the pin, and is labelled `security` when a commit names a CVE, an advisory, a memory safety fix or a bypass.
+- Modules tracked by tags move to their default branch when it has fix commits (not docs, ci, tests) past the pin and the newest tag whose subjects match those words: such fixes can wait months for a release.
+- `scan` also keeps one issue, "Unfixed vulnerabilities in linked libraries": HIGH or CRITICAL findings without a Debian fix in packages that nginx, its modules or libmodsecurity load. Ids checked as not affecting the image go to `tools/watch/unfixed.ignore` with the reason.
 - `scan` runs Trivy on the newest published image every 6 hours: fixable HIGH or CRITICAL Debian packages open a `security` pull request that changes `REFRESH`, which makes the runtime stage reinstall and upgrade its packages.
 - `patches/` is for emergencies only (see `patches/README.md`).
 

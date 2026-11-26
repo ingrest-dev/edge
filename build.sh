@@ -9,6 +9,19 @@ cd /src
 cmake -S brotli/deps/brotli -B brotli/deps/brotli/out -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DBROTLI_DISABLE_TESTS=ON >/dev/null
 cmake --build brotli/deps/brotli/out --target brotlienc -j"$(nproc)" >/dev/null
 
+MS=/usr/local/modsecurity
+(
+	cd libmodsecurity
+	sh build.sh >/dev/null
+	./configure --prefix=$MS --disable-static --disable-examples --disable-doxygen-doc \
+		--with-yajl --with-pcre2 --without-libxml --without-curl --without-lua --without-lmdb \
+		--without-ssdeep --without-geoip --without-maxmind >/dev/null
+	make -j"$(nproc)" >/dev/null
+	make install-strip >/dev/null
+)
+rm -rf $MS/lib/*.la $MS/lib/pkgconfig
+export MODSECURITY_INC=$MS/include MODSECURITY_LIB=$MS/lib
+
 make -C luajit -j"$(nproc)" PREFIX=$LJ >/dev/null
 make -C luajit install PREFIX=$LJ >/dev/null
 export LUAJIT_LIB=$LJ/lib LUAJIT_INC=$LJ/include/luajit-2.1
@@ -54,11 +67,13 @@ done
 make -C cjson LUA_INCLUDE_DIR="$LUAJIT_INC" >/dev/null
 install -m755 cjson/cjson.so $LIB/cjson.so
 
-for d in nginx luajit ndk lua stream-lua resty-core resty-lrucache resty-string cjson brotli zstd geoip2 modsecurity; do
+for d in nginx luajit ndk lua stream-lua resty-core resty-lrucache resty-string cjson brotli zstd geoip2 modsecurity libmodsecurity; do
 	mkdir -p "$P/licenses/$d"
 	for f in /src/$d/LICENSE* /src/$d/COPYRIGHT* /src/$d/COPYING* /src/$d/README.markdown /src/$d/README.md; do
 		[ ! -f "$f" ] || cp "$f" "$P/licenses/$d/"
 	done
 done
 cp brotli/deps/brotli/LICENSE "$P/licenses/brotli/LICENSE.brotli"
+cp libmodsecurity/others/libinjection/COPYING "$P/licenses/libmodsecurity/COPYING.libinjection"
+cp libmodsecurity/others/mbedtls/LICENSE "$P/licenses/libmodsecurity/LICENSE.mbedtls"
 rm -rf $LJ/share/man
