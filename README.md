@@ -20,7 +20,7 @@ Web server image for the [Ingrest](https://github.com/ingrest-dev) panel: nginx 
 
 ## Versions
 
-`VERSION` is `<nginx version>.<build>`; the image reports the build in `nginx -v` as `ingrest-<build>`.
+`VERSION` is `<nginx version>.<build>`; the image reports the build in `nginx -v` as `ingrest-<build>`. Every published image needs its own version: a module or package change bumps the build, and `publish` refuses a version already published with another image.
 
 - `watch` checks the nginx mainline hourly, but GitHub drops most scheduled runs: the Cloudflare Worker in `tools/trigger` checks nginx.org every 5 minutes and dispatches `watch` when a newer signed mainline has no `nginx-<version>` branch yet. Deploy it with `CLOUDFLARE_API_TOKEN` (Workers Scripts: Edit), `CLOUDFLARE_ACCOUNT_ID` and, the first time or to rotate it, `GITHUB_TOKEN` (fine-grained, this repository, Actions: write) in `tools/trigger/deploy.sh`. A new signed release opens a pull request that bumps `VERSION`; when its CHANGES entry has security fixes, the pull request is labelled `security` and lists them.
 - nginx releases are automatic: when the bot pull request builds and passes the smoke test on both architectures and changes only `VERSION`, `build` merges it, builds `main`, and `publish` signs it without review, but only when `VERSION` is the only file changed since the commit of the last published image (`commit` in `stable.json`). Anything else, modules included, waits for a merge and the `release` approval.
